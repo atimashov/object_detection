@@ -1,0 +1,14 @@
+seed: 123
+# Hyperparameters etc.
+LEARNING_RATE: 2e-5
+CUDA: true
+model: 'Darknet20'
+BATCH_SIZE: 64 # 64 in original paper but I don't have that much vram, grad accum?
+decay_epochs: 30
+decay_rate: 0.1
+EPOCHS: 1000
+NUM_WORKERS: 2
+PIN_MEMORY: true
+LOAD_MODEL: false
+LOAD_MODEL_FILE: "weights/darknet20_best.pth.tar"
+DATASET_DIR: 'home/alex/datasets/imagenet/'
