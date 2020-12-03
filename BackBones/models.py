@@ -50,7 +50,7 @@ class Darknet20(nn.Module):
 		self.features = self._create_features()
 		self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
 		self.classifier = nn.Sequential(
-			nn.Dropout(p=0.5, inplace=False),
+			nn.Dropout(p = 0.5, inplace=False),
 			nn.Linear(1024, num_classes),
 		)
 
@@ -90,10 +90,13 @@ class Darknet20(nn.Module):
 		x = self.features(x)
 		x = self.avgpool(x)
 		x = torch.flatten(x, start_dim = 1) #x.view(x.size(0), x.size(1))  # resize for fc layers
-		return self.classifier(x)
+		x = self.classifier(x)
+		return x
 
 def test():
     model = Darknet20()
-    x = torch.randn((2, 3, 224, 224))
+    x = torch.randn((27, 3, 224, 224))
     print(model(x).shape)
-test()
+
+if __name__=='__main__':
+	test()
