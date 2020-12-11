@@ -5,9 +5,13 @@ from torchvision import transforms
 from torch.utils.data import Dataset
 
 class ImageNet(Dataset):
-	def __init__(self, root = 'home/alex/datasets/imagenet/', train = True, min_class = 750):
+	def __init__(
+			self, root = 'home/alex/datasets/imagenet/', train = True, min_class = 750,
+			balanced = False, augmentations = None
+				 ):
 		self.root = root
 		self.train = train
+		self.augm = augmentations
 		classes = os.listdir(root)
 		with open('{}/classes.json'.format(root)) as json_file:
 			classes_names = json.load(json_file)
@@ -21,7 +25,10 @@ class ImageNet(Dataset):
 			imgs = os.listdir('{}/{}'.format(root, my_class))
 			if len(imgs) < min_class: continue
 
-			train_val, n_class = int(0.9 * len(imgs)), len(imgs)
+			if balanced:
+				train_val, n_class = int(0.9 * min_class), min_class
+			else:
+				train_val, n_class = int(0.9 * len(imgs)), len(imgs)
 			if train:
 				self.imgs.extend([os.path.join(root, my_class, img) for img in os.listdir(os.path.join(root, my_class))[:train_val]])
 				self.labels_idx.extend([i] * train_val)
@@ -44,21 +51,23 @@ class ImageNet(Dataset):
 		img = Image.open(img_path).convert("RGB")
 		target = self.labels_idx[idx]
 
-		if self.train:
-			trans = transforms.Compose([
-				transforms.Resize((256, 256)),
-				transforms.RandomCrop(224),
-				transforms.RandomHorizontalFlip(0.5),
-				transforms.ToTensor(),
-				transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225])
-			])
-		else:
-			trans = transforms.Compose([
-				transforms.Resize((224, 224)),
-				transforms.ToTensor(),
-				transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-			])
-		return trans(img), target
-
+		if self.augm:
+			img = self.augm(img)
+		# if self.train:
+		# 	trans = transforms.Compose([
+		# 		transforms.Resize((256, 256)),
+		# 		transforms.RandomCrop(224),
+		# 		transforms.RandomHorizontalFlip(0.5),
+		# 		transforms.ToTensor(),
+		# 		transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225])
+		# 	])
+		# else:
+		# 	trans = transforms.Compose([
+		# 		transforms.Resize((224, 224)),
+		# 		transforms.ToTensor(),
+		# 		transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+		# 	])
+		# return trans(img), target
+		return img, target
 if __name__ == '__main__':
 	pass
