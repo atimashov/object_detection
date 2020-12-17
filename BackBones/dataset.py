@@ -11,7 +11,7 @@ class ImageNet(Dataset):
 				 ):
 		self.root = root
 		self.train = train
-		self.augm = augmentations
+		self.augmentations = augmentations
 		classes = os.listdir(root)
 		with open('{}/classes.json'.format(root)) as json_file:
 			classes_names = json.load(json_file)
@@ -51,23 +51,9 @@ class ImageNet(Dataset):
 		img = Image.open(img_path).convert("RGB")
 		target = self.labels_idx[idx]
 
-		if self.augm:
-			img = self.augm(img)
-		# if self.train:
-		# 	trans = transforms.Compose([
-		# 		transforms.Resize((256, 256)),
-		# 		transforms.RandomCrop(224),
-		# 		transforms.RandomHorizontalFlip(0.5),
-		# 		transforms.ToTensor(),
-		# 		transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225])
-		# 	])
-		# else:
-		# 	trans = transforms.Compose([
-		# 		transforms.Resize((224, 224)),
-		# 		transforms.ToTensor(),
-		# 		transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-		# 	])
-		# return trans(img), target
+		if self.augmentations:
+			img = self.augmentations(img)
+
 		return img, target
 if __name__ == '__main__':
 	pass
