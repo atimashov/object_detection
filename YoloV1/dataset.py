@@ -58,11 +58,13 @@ class VOCDataset(torch.utils.data.Dataset):
         return  image, label_matrix
 
 def test():
-    img_dir = 'data/images'
-    label_dir = 'data/labels'
+    data_dir = '/home/alex/datasets/PascalVOC'
+    img_dir = '{}/images'.format(data_dir)
+    label_dir = '{}/labels'.format(data_dir)
+    csv_dir = '{}/100examples.csv'.format(data_dir)
     transform = transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor(), ])
     data = VOCDataset(
-        dataset_csv = 'data/100examples.csv', img_dir = img_dir, label_dir = label_dir , transform = transform
+        dataset_csv = csv_dir, img_dir = img_dir, label_dir = label_dir , transform = transform
     )
     data_loader = DataLoader(
         data, batch_size = 4, shuffle = True, num_workers = 6, drop_last=True, pin_memory = True

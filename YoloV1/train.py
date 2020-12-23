@@ -4,9 +4,9 @@ import torch.optim as optim
 import torchvision.transforms.functional as FT
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from .models import YoloV1
-from .dataset import VOCDataset
-from .utils import (
+from models import YoloV1
+from dataset import VOCDataset
+from utils import (
     init_weights,
     non_max_suppression,
     mean_average_precision,
@@ -15,13 +15,14 @@ from .utils import (
     get_bboxes,
     plot_image,
     get_dataloader,
+    print_report,
     # save_checkpoint,
     # load_checkpoint,
 )
-from .loss import YoloLoss
+from loss import YoloLoss
 import yaml
 from tqdm import tqdm
-from argparse import  ArgumentParser
+from argparse import ArgumentParser
 import os
 from time import time
 
@@ -31,7 +32,7 @@ torch.manual_seed(seed)
 # Hyperparameters etc.
 LEARNING_RATE = 2e-5
 DEVICE = "cuda" if torch.cuda.is_available else "cpu"
-BATCH_SIZE = 16 # 64 in original paper but I don't have that much vram, grad accum?
+BATCH_SIZE = 16  # 64 in original paper but I don't have that much vram, grad accum?
 WEIGHT_DECAY = 0
 EPOCHS = 1000
 NUM_WORKERS = 2
@@ -53,42 +54,44 @@ class Compose(object):
         return img, bboxes
 
 
-transform = Compose([transforms.Resize((448, 448)), transforms.ToTensor(),])
+transform = Compose([transforms.Resize((448, 448)), transforms.ToTensor(), ])
 
-def train_fn(train_loader, model, optimizer, loss_fn):
+
+# def train_fn(train_loader, model, optimizer, loss_fn):
+#     loop = tqdm(train_loader, leave=True)
+#     mean_loss = []
+#
+#     for batch_idx, (x, y) in enumerate(loop):
+#         x, y = x.to(DEVICE), y.to(DEVICE)
+#         out = model(x)
+#         loss = loss_fn(out, y)
+#         mean_loss.append(loss.item())
+#         optimizer.zero_grad()
+#         loss.backward()
+#         optimizer.step()
+#
+#         # update progress bar
+#         loop.set_postfix(loss=loss.item())
+#
+#     print(f"Mean loss was {sum(mean_loss)/len(mean_loss)}")
+
+
+def train_epoch(train_loader, model, optimizer, device, loss_func=torch.nn.CrossEntropyLoss()):
     loop = tqdm(train_loader, leave=True)
-    mean_loss = []
 
-    for batch_idx, (x, y) in enumerate(loop):
-        x, y = x.to(DEVICE), y.to(DEVICE)
-        out = model(x)
-        loss = loss_fn(out, y)
-        mean_loss.append(loss.item())
+    for batch_idx, (imgs, labels) in enumerate(loop):
+        model.train()  # put model to training mode TODO: should I do it every step?
+        imgs, labels = imgs.to(device), labels.to(device)  # TODO: add dtype
+        scores = model(imgs)
+        loss = loss_func(scores, labels)
+
+        # Zero out all of the gradients for the variables which the optimizer will update.
         optimizer.zero_grad()
+        # Backwards pass and computing gradients
         loss.backward()
         optimizer.step()
-
         # update progress bar
         loop.set_postfix(loss=loss.item())
-
-    print(f"Mean loss was {sum(mean_loss)/len(mean_loss)}")
-
-
-def train_epoch(train_loader, model, optimizer, device, loss_func = torch.nn.CrossEntropyLoss()):
-	loop = tqdm(train_loader, leave = True)
-	for batch_idx, (imgs, labels) in enumerate(loop):
-		model.train()  # put model to training mode TODO: should I do it every step?
-		imgs, labels = imgs.to(device), labels.to(device) # TODO: add dtype
-		scores = model(imgs)
-		loss = loss_func(scores, labels)
-
-		# Zero out all of the gradients for the variables which the optimizer will update.
-		optimizer.zero_grad()
-		# Backwards pass and computing gradients
-		loss.backward()
-		optimizer.step()
-		# update progress bar
-		loop.set_postfix(loss=loss.item())
 
 
 # def main():
@@ -164,8 +167,10 @@ def train_epoch(train_loader, model, optimizer, device, loss_func = torch.nn.Cro
 #         train_fn(train_loader, model, optimizer, loss_fn)
 
 
-def train_loop(config, gpu_n = '0'):
+def train_loop(cfg_path, gpu_n='0'):
     # get configs
+    with open(cfg_path, 'r') as stream:
+        config = yaml.safe_load(stream)
     device = torch.device('cuda:{}'.format(gpu_n) if config['GPU'] and torch.cuda.is_available else 'cpu')
     dtype = torch.float32  # TODO: find out how it affects speed and accuracy
     MODEL = config['MODEL']
@@ -183,14 +188,14 @@ def train_loop(config, gpu_n = '0'):
     BATCH_SIZE = config['BATCH_SIZE']
     NUM_WORKERS = config['NUM_WORKERS']
     PIN_MEMORY = config['PIN_MEMORY']
-
-
+    CSV_TRAIN = config['CSV_TRAIN']
+    CSV_VAL = config['CSV_VAL']
 
     # set up model
     if MODEL == 'Darknet':
-        model = YoloV1(split_size=7, num_boxes=2, num_classes=20).to(DEVICE)
+        model = YoloV1(grid_size=7, num_boxes=2, num_classes=20).to(DEVICE)
     elif MODEL == 'VGG':
-        pass # add here VGG backbone
+        pass  # add here VGG backbone
     if LOAD_MODEL:
         # TODO: load backbone
         # cfg_cp, start_epoch = load_checkpoint(LOAD_MODEL_FILE, model)
@@ -211,10 +216,10 @@ def train_loop(config, gpu_n = '0'):
         start_epoch = 0
 
     optimizer = optim.Adam(
-        model.parameters(), lr = L_RATE, weight_decay = WEIGHT_DECAY
+        model.parameters(), lr=L_RATE, weight_decay=WEIGHT_DECAY
     )
     loss_fn = YoloLoss()
-    loader_params = BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATASET_DIR
+    loader_params = BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATASET_DIR, CSV_TRAIN, CSV_VAL
     loader = get_dataloader(loader_params)
 
     # create folder to save models
@@ -223,31 +228,34 @@ def train_loop(config, gpu_n = '0'):
             os.makedirs('{}/{}'.format(SAVE_MODEL_DIR, MODEL))
     losses, accuracies = {'train': [], 'validate': []}, {'train': [], 'validate': []}
 
-
     for epoch in range(start_epoch, EPOCHS + start_epoch):
         t = time()
         if (epoch + 1) % DECAY_EPOCHS == 0:
             L_RATE *= (1 - DECAY_RATE)
-            optimizer = optim.Adam(model.parameters(), lr = L_RATE, weight_decay = WEIGHT_DECAY)
+            optimizer = optim.Adam(model.parameters(), lr=L_RATE, weight_decay=WEIGHT_DECAY)
 
         # print epoch number
-        # print_report(part='start', epoch=epoch)
+        print_report(part='start', epoch=epoch)
         # train loop
         train_epoch(loader['train'], model, optimizer, device, loss_fn)
 
         # print metrics
-        pred_boxes, target_boxes = get_bboxes(
-            loader['train'], model, iou_threshold = 0.5, threshold=0.4
+        pred_bb, target_bb = get_bboxes(
+            loader['train'], model, iou_threshold=0.5, threshold=0.4
+        )
+        train_map = mean_average_precision(
+            pred_bb, target_bb, iou_threshold = 0.5, box_format = 'midpoint'
         )
 
-        mean_avg_prec = mean_average_precision(
-            pred_boxes, target_boxes, iou_threshold=0.5, box_format="midpoint"
+        v_pred_bb, v_target_bb = get_bboxes(
+            loader['val'], model, iou_threshold=0.5, threshold=0.4
         )
-        print(f"Train mAP: {mean_avg_prec}")
-        # val_acc, val_loss = get_accuracy(loader['val'], model, device, dtype, loss_func, n_tops)
-        # train_acc, train_loss = get_accuracy(loader['train'], model, device, dtype, loss_func, n_tops)
-        # metrics = train_loss, val_loss, train_acc, val_acc, n_tops
-        # print_report(part='accuracy', metrics=metrics)
+        val_map = mean_average_precision(
+            v_pred_bb, v_target_bb, iou_threshold=0.5, box_format='midpoint'
+        )
+
+        metrics = -1, -1, train_map, val_map
+        print_report(part='accuracy', metrics=metrics)
         # collect metrics
         # losses['train'].append(train_loss)
         # losses['validate'].append(val_loss)
@@ -259,7 +267,7 @@ def train_loop(config, gpu_n = '0'):
         #     save_checkpoint(model=model, cfg=cfg, epoch=epoch, loss=round(val_loss, 3))
 
         # print time
-        # print_report(part='end', t=int(time() - t))
+        print_report(part='end', t=int(time() - t))
 
 
 if __name__ == '__main__':

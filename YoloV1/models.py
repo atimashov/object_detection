@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from config import architecture_yolov1 as architecture_config
 
 class CNNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, **kwargs):
@@ -48,7 +47,7 @@ class YoloV1(nn.Module):
             ('conv', (3, 1024, 1, 1)),
         ]
         self.in_channels = in_channels
-        self.darknet24 = self._create_features()
+        self.features = self._create_features()
         self.classifier = self._create_fcs(**kwargs)
 
     def _create_features(self):
@@ -95,7 +94,7 @@ class YoloV1(nn.Module):
         return out
 
     def forward(self, x):
-        x = self.darknet24(x)
+        x = self.features(x)
         x = torch.flatten(x, start_dim = 1)
         x = self.classifier(x)
         return x

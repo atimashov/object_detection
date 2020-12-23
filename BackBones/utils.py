@@ -53,7 +53,7 @@ def get_accuracy(loader, model, device, dtype, loss_func = nn.CrossEntropyLoss()
 	return acc, loss
 
 def save_checkpoint(model, cfg,  epoch, loss):
-	N, PATH = cfg['SAVE_MODEL_N'], '{}/{}'.format(cfg['SAVE_MODEL_DIR'], cfg['MODEL'])
+	N, PATH = cfg['SAVE_MODEL_N'], '{}/{}{}'.format(cfg['SAVE_MODEL_DIR'], cfg['MODEL'], cfg['N_LAYERS'])
 
 	# Delete the worst checkpoint
 	if len(os.listdir(PATH)) == N:

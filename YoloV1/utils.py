@@ -8,15 +8,16 @@ from torch.utils.data import DataLoader
 from dataset import VOCDataset
 from torch.nn.init import kaiming_normal_
 from torch import nn
+from termcolor import colored
 
 def init_weights(model):
-	for layer in model.features:
-		if type(layer) in [nn.Conv2d, nn.Linear]:
-			kaiming_normal_(layer.weight)
-	for layer in model.classifier:
-		if type(layer) in [nn.Conv2d, nn.Linear]:
-			kaiming_normal_(layer.weight)
-	return model # TODO: should I return?
+    for layer in model.features:
+        if type(layer) in [nn.Conv2d, nn.Linear]:
+            kaiming_normal_(layer.weight)
+    for layer in model.classifier:
+        if type(layer) in [nn.Conv2d, nn.Linear]:
+            kaiming_normal_(layer.weight)
+    return model # TODO: should I return?
 
 def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
     """
@@ -198,7 +199,7 @@ def mean_average_precision(
         TP_cumsum = torch.cumsum(TP, dim=0)
         FP_cumsum = torch.cumsum(FP, dim=0)
         recalls = TP_cumsum / (total_true_bboxes + epsilon)
-        precisions = torch.divide(TP_cumsum, (TP_cumsum + FP_cumsum + epsilon))
+        precisions = torch.div(TP_cumsum, (TP_cumsum + FP_cumsum + epsilon))
         precisions = torch.cat((torch.tensor([1]), precisions))
         recalls = torch.cat((torch.tensor([0]), recalls))
         # torch.trapz for numerical integration
@@ -290,13 +291,7 @@ def plot_image(image, boxes):
     plt.show()
 
 def get_bboxes(
-    loader,
-    model,
-    iou_threshold,
-    threshold,
-    pred_format="cells",
-    box_format="midpoint",
-    device="cuda",
+    loader, model, iou_threshold, threshold, device, box_format = 'midpoint'
 ):
     all_pred_boxes = []
     all_true_boxes = []
@@ -324,10 +319,46 @@ def get_bboxes(
                 box_format=box_format,
             )
 
+            for nms_box in nms_boxes:
+                all_pred_boxes.append([train_idx] + nms_box)
 
-            #if batch_idx == 0 and idx == 0:
-            #    plot_image(x[idx].permute(1,2,0).to("cpu"), nms_boxes)
-            #    print(nms_boxes)
+            for box in true_bboxes[idx]:
+                # many will get converted to 0 pred
+                if box[1] > threshold:
+                    all_true_boxes.append([train_idx] + box)
+
+            train_idx += 1
+
+    model.train()
+    return all_pred_boxes, all_true_boxes
+
+def get_metrics(
+    loader, model, iou_threshold, threshold, device, dtype, box_format = 'midpoint'
+):
+    all_pred_boxes = []
+    all_true_boxes = []
+
+    model.eval() # set model to evaluation mode
+    train_idx = 0
+
+    for imgs, labels in loader:
+        imgs = imgs.to(device = device, dtype = dtype)
+        labels = labels.to(device = device) # , dtype = dtype
+
+        with torch.no_grad():
+            predictions = model(imgs)
+
+        batch_size = imgs.shape[0]
+        true_bboxes = cellboxes_to_boxes(labels)
+        bboxes = cellboxes_to_boxes(predictions)
+
+        for idx in range(batch_size):
+            nms_boxes = non_max_suppression(
+                bboxes[idx],
+                iou_threshold=iou_threshold,
+                threshold=threshold,
+                box_format=box_format,
+            )
 
             for nms_box in nms_boxes:
                 all_pred_boxes.append([train_idx] + nms_box)
@@ -342,21 +373,25 @@ def get_bboxes(
     model.train()
     return all_pred_boxes, all_true_boxes
 
+
+
 def get_dataloader(params):
     # create data loader
-    BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATA_DIR = params
-    img_dir, label_dir, csv_file = '{}/images'.format(DATA_DIR), '{}/labels'.format(DATA_DIR), '{}/100examples.csv'.format(DATA_DIR)
-
+    BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATA_DIR, CSV_TRAIN, CSV_VAL = params
+    img_dir = '{}/images'.format(DATA_DIR)
+    label_dir = '{}/labels'.format(DATA_DIR)
+    csv_dir_t = '{}/{}'.format(DATA_DIR, CSV_TRAIN)
+    csv_dir_v = '{}/{}'.format(DATA_DIR, CSV_VAL)
     my_transform = {
-        'train': transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor()]),
-        'val': transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor()])
+        'train': transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor(),]),
+        'val': transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor(), ])
     }
 
     data_train = VOCDataset(
-        dataset_csv = csv_file, img_dir = img_dir, label_dir = label_dir , transform = my_transform['train']
+        dataset_csv = csv_dir_t, img_dir = img_dir, label_dir = label_dir , transform = my_transform['train']
     )
     data_val = VOCDataset(
-        dataset_csv = csv_file, img_dir = img_dir, label_dir = label_dir , transform = my_transform['val']
+        dataset_csv = csv_dir_v, img_dir = img_dir, label_dir = label_dir , transform = my_transform['val']
     )
     data_loader = {
         'train': DataLoader(
@@ -369,5 +404,38 @@ def get_dataloader(params):
         )
     }
     return data_loader
+
+def print_report(part, epoch = None, t = None, metrics = None):
+    if part == 'start':
+        print('{} Epoch {}{} {}'.format(' ' * 60, ' ' * (3 - len(str(epoch))), epoch, ' ' * 61))
+        print(' ' * 132)
+    elif part == 'end':
+        t_min, t_sec = str(t // 60), str(t % 60)
+        txt = 'It took {}{} min. {}{} sec.'.format(' ' * (2 - len(t_min)), t_min, ' ' * (2 - len(t_sec)), t_sec)
+        print(txt)
+        print()
+        print(colored('-' * 132, 'cyan'))
+        print()
+    else: # report statistics
+        train_loss, val_loss, train_map, val_map = metrics
+        t_loss, v_loss = round(train_loss, 3), round(val_loss, 3)
+        t_loss = '{}{}'.format(t_loss, ' ' * (5 - len(str(t_loss))))
+        v_loss = '{}{}'.format(v_loss, ' ' * (5 - len(str(v_loss))))
+        t_print = 'TRAIN   : loss = {}'.format(t_loss)
+        v_print = 'VALIDATE: loss = {}'.format(v_loss)
+
+        t_map, v_map = round(100 * float(train_map), 2), round(100 * float(val_map), 2)
+        if '.' not in str(t_map):
+            t_map = '{}.00'.format(t_map)
+        else:
+            t_map = '{}{}'.format(t_map, '0' * (6 - len(str(t_map))))
+        if '.' not in str(v_map):
+            v_map = '{}.00'.format(v_map)
+        else:
+            v_map = '{}{}'.format(v_map, '0' * (6 - len(str(v_map))))
+        t_print += ' | mAP@0.5  = {}%'.format(t_map) # mAP@0.5:0.05:0.95
+        v_print += ' | mAP@0.5  = {}%'.format(v_map) # mAP@0.5:0.05:0.95
+        print(t_print)
+        print(v_print)
 
 

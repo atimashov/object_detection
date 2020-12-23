@@ -8,7 +8,7 @@ class ImageNet(Dataset):
 	def __init__(
 			self, root = 'home/alex/datasets/imagenet/', train = True, min_class = 750,
 			balanced = False, augmentations = None
-				 ):
+		):
 		self.root = root
 		self.train = train
 		self.augmentations = augmentations

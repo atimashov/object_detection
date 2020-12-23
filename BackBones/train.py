@@ -3,7 +3,7 @@ from torch import optim
 from torchvision.models import alexnet, vgg16
 from torchvision import transforms
 from dataset import ImageNet
-from models import Darknet20, MyAlexNet
+from models import Darknet, MyAlexNet
 from utils import (
     init_weights,
 	get_n_classes,
@@ -48,11 +48,15 @@ def train_epoch(train_loader, model, optimizer, device, loss_func = torch.nn.Cro
 		loop.set_postfix(loss=loss.item())
 
 def train_loop(loader, model, epochs = 3, start_epoch = 0, params = None, device = None, loss_func = torch.nn.CrossEntropyLoss, n_tops = [1, 5]):
-	L_RATE, DECAY_RATE, DECAY_EPOCHS, WEIGHT_DECAY, SAVE_MODEL, SAVE_MODEL_N, SAVE_MODEL_DIR, MODEL = params
+	L_RATE, DECAY_RATE, DECAY_EPOCHS, WEIGHT_DECAY, SAVE_MODEL, SAVE_MODEL_N, SAVE_MODEL_DIR, MODEL, N_LAYERS = params
 	optimizer = optim.Adam(model.parameters(), lr = L_RATE, weight_decay = WEIGHT_DECAY)
 	if SAVE_MODEL:
-		if not os.path.exists('{}/{}'.format(SAVE_MODEL_DIR, MODEL)):
-			os.makedirs('{}/{}'.format(SAVE_MODEL_DIR, MODEL))
+		if MODEL == 'Darknet':
+			path = '{}{}'.format(MODEL, N_LAYERS)
+		else:
+			path = MODEL
+		if not os.path.exists('{}/{}'.format(SAVE_MODEL_DIR, path)):
+			os.makedirs('{}/{}'.format(SAVE_MODEL_DIR, path))
 	losses, accuracies = {'train': [], 'validate': []}, {'train': [], 'validate': []}
 
 	for epoch in range(start_epoch, epochs + start_epoch):
@@ -118,6 +122,7 @@ if __name__ == '__main__':
 	PIN_MEMORY = cfg['PIN_MEMORY']
 	MIN_IMAGES = cfg['MIN_IMAGES']
 	LOSS = cfg['LOSS']
+	N_LAYERS = cfg['N_LAYERS']
 	if LOSS =='SVM':
 		loss_fc = SVMLoss()
 	elif LOSS == 'My Entropy':
@@ -128,8 +133,9 @@ if __name__ == '__main__':
 
 	# set up model
 	n_classes = get_n_classes(MIN_IMAGES, root = DATASET_DIR)
-	if MODEL == 'Darknet20':
-		model = Darknet20(num_classes = n_classes).to(device)
+	if MODEL == 'Darknet':
+		N_LAYERS = max(20, min(24, N_LAYERS))
+		model = Darknet(n_layers = N_LAYERS, num_classes = n_classes).to(device)
 	elif MODEL == 'Alexnet':
 		model = MyAlexNet(num_classes = n_classes).to(device)
 	if LOAD_MODEL:
@@ -190,7 +196,7 @@ if __name__ == '__main__':
 		)
 	}
 
-	params = L_RATE, DECAY_RATE, DECAY_EPOCHS, WEIGHT_DECAY, SAVE_MODEL, SAVE_MODEL_N, SAVE_MODEL_DIR, MODEL
+	params = L_RATE, DECAY_RATE, DECAY_EPOCHS, WEIGHT_DECAY, SAVE_MODEL, SAVE_MODEL_N, SAVE_MODEL_DIR, MODEL, N_LAYERS
 	print()
 	train_loop(
 		loader = data_loader,  model = model, epochs = EPOCHS, start_epoch = start_epoch, params = params, device = device, loss_func = loss_fc

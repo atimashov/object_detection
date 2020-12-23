@@ -11,9 +11,10 @@ class CNNBlock(nn.Module):
 	def forward(self, x):
 		return  self.leakyrelu(self.batchnorm(self.conv(x)))
 
-class Darknet20(nn.Module):
-	def __init__(self, in_channels = 3, num_classes = 1000, **kwargs):
-		super(Darknet20, self).__init__()
+class Darknet(nn.Module):
+	def __init__(self, n_layers = 20, in_channels = 3, num_classes = 1000, **kwargs):
+		super(Darknet, self).__init__()
+		self.n_layers = n_layers
 		self.architecture = [
 			# CONV layer: kernel size, out_cannels, stride, padding
 			# MAX pooling: kernel size, stride
@@ -41,11 +42,13 @@ class Darknet20(nn.Module):
 				],
 				2
 			)),
-			# ('conv', (3, 1024, 1, 1)),
-			# ('conv', (3, 1024, 2, 1)),
-			# ('conv', (3, 1024, 1, 1)),
-			# ('conv', (3, 1024, 1, 1)),
+			('conv', (3, 1024, 1, 1)),
+			('conv', (3, 1024, 2, 1)),
+			('conv', (3, 1024, 1, 1)),
+			('conv', (3, 1024, 1, 1)),
 		]
+		if self.n_layers < 24:
+			self.architecture = self.architecture[:-(24 - self.n_layers)]
 		self.in_channels = in_channels
 		self.features = self._create_features()
 		self.avgpool = nn.AdaptiveAvgPool2d(output_size=(1, 1))
@@ -137,7 +140,7 @@ class MyAlexNet(nn.Module):
 
 
 def test():
-    model = Darknet20()
+    model = Darknet()
     x = torch.randn((27, 3, 224, 224))
     print(model(x).shape)
 
