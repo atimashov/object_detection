@@ -5,12 +5,10 @@ import matplotlib.patches as patches
 from collections import Counter
 from torchvision import transforms
 from torch.utils.data import DataLoader
+from dataset import VOCDataset
 from torch.nn.init import kaiming_normal_
 from torch import nn
 from termcolor import colored
-import os
-from dataset import VOCDataset
-from models import Darknet, YoloV1_pretrained, OD_backbone
 
 def init_weights(model):
     for layer in model.features:
@@ -21,35 +19,17 @@ def init_weights(model):
             kaiming_normal_(layer.weight)
     return model # TODO: should I return?
 
-def get_dataloader(params, transform):
-    # create data loader
-    BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATA_DIR, CSV_TRAIN, CSV_VAL = params
-    img_dir = '{}/images'.format(DATA_DIR)
-    label_dir = '{}/labels'.format(DATA_DIR)
-    csv_dir_t = '{}/{}'.format(DATA_DIR, CSV_TRAIN)
-    csv_dir_v = '{}/{}'.format(DATA_DIR, CSV_VAL)
-    my_transform = transform
-
-    data_train = VOCDataset(
-        dataset_csv = csv_dir_t, img_dir = img_dir, label_dir = label_dir , transform = my_transform['train']
-    )
-    data_val = VOCDataset(
-        dataset_csv = csv_dir_v, img_dir = img_dir, label_dir = label_dir , transform = my_transform['val']
-    )
-    data_loader = {
-        'train': DataLoader(
-            data_train, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS,
-            drop_last=True, pin_memory=PIN_MEMORY
-        ),
-        'val': DataLoader(
-            data_val, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS,
-            drop_last=True, pin_memory=PIN_MEMORY
-        )
-    }
-    return data_loader
-
-
 def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
+    """
+    Calculates intersection over union
+    Parameters:
+        boxes_preds (tensor): Predictions of Bounding Boxes (BATCH_SIZE, 4)
+        boxes_labels (tensor): Correct labels of Bounding Boxes (BATCH_SIZE, 4)
+        box_format (str): midpoint/corners, if boxes (x,y,w,h) or (x1,y1,x2,y2)
+    Returns:
+        tensor: Intersection over union for all examples
+    """
+
     if box_format == "midpoint":
         box1_x1 = boxes_preds[..., 0:1] - boxes_preds[..., 2:3] / 2
         box1_y1 = boxes_preds[..., 1:2] - boxes_preds[..., 3:4] / 2
@@ -84,6 +64,17 @@ def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
     return intersection / (box1_area + box2_area - intersection + 1e-6)
 
 def non_max_suppression(bboxes, iou_threshold, threshold, box_format="corners"):
+    """
+    Does Non Max Suppression given bboxes
+    Parameters:
+        bboxes (list): list of lists containing all bboxes with each bboxes
+        specified as [class_pred, prob_score, x1, y1, x2, y2]
+        iou_threshold (float): threshold where predicted bboxes is correct
+        threshold (float): threshold to remove predicted bboxes (independent of IoU)
+        box_format (str): "midpoint" or "corners" used to specify bboxes
+    Returns:
+        list: bboxes after performing NMS given a specific IoU threshold
+    """
 
     assert type(bboxes) == list
 
@@ -107,12 +98,26 @@ def non_max_suppression(bboxes, iou_threshold, threshold, box_format="corners"):
         ]
 
         bboxes_after_nms.append(chosen_box)
+
     return bboxes_after_nms
 
 
 def mean_average_precision(
-        pred_boxes, true_boxes, iou_threshold=0.5, box_format = 'midpoint', num_classes=20
+        pred_boxes, true_boxes, iou_threshold=0.5, box_format="midpoint", num_classes=20
 ):
+    """
+    Calculates mean average precision
+    Parameters:
+        pred_boxes (list): list of lists containing all bboxes with each bboxes
+        specified as [train_idx, class_prediction, prob_score, x1, y1, x2, y2]
+        true_boxes (list): Similar as pred_boxes except all the correct ones
+        iou_threshold (float): threshold where predicted bboxes is correct
+        box_format (str): "midpoint" or "corners" used to specify bboxes
+        num_classes (int): number of classes
+    Returns:
+        float: mAP value across all classes given a specific IoU threshold
+    """
+
     # list storing all AP for respective classes
     average_precisions = []
 
@@ -212,7 +217,8 @@ def convert_cellboxes(predictions, S=7):
     using 2 for loops iterating range(S) and convert them one
     by one, resulting in a slower but more readable implementation.
     """
-    predictions = predictions.to("cpu") # what if to change to GPU / remove this row
+
+    predictions = predictions.to("cpu")
     batch_size = predictions.shape[0]
     predictions = predictions.reshape(batch_size, 7, 7, 30)
     bboxes1 = predictions[..., 21:25]
@@ -222,7 +228,7 @@ def convert_cellboxes(predictions, S=7):
     )
     best_box = scores.argmax(0).unsqueeze(-1)
     best_boxes = bboxes1 * (1 - best_box) + best_box * bboxes2
-    cell_indices = torch.arange(7).repeat(batch_size, 7, 1).unsqueeze(-1) # .to(torch.device('cuda:1'))
+    cell_indices = torch.arange(7).repeat(batch_size, 7, 1).unsqueeze(-1)
     x = 1 / S * (best_boxes[..., :1] + cell_indices)
     y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3))
     w_y = 1 / S * best_boxes[..., 2:4]
@@ -237,40 +243,9 @@ def convert_cellboxes(predictions, S=7):
 
     return converted_preds
 
-def convert_cellboxes_new(predictions, S = 7, B = 2, C = 20):
-    # predictions = predictions.to("cpu")
-    batch_size = predictions.shape[0]
-    predictions = predictions.reshape(batch_size, S, S, C + B * 5)
 
-    # TODO: rewrite for the case when B <> 2
-    bboxes1 = predictions[..., (C + 5 * 0 + 1):(C + 5 * 0 + 5)]
-    bboxes2 = predictions[..., (C + 5 * 1 + 1):(C + 5 * 1 + 5)]
-    scores = torch.cat(
-        (predictions[..., C].unsqueeze(0), predictions[..., C + 5].unsqueeze(0)), dim = 0
-    )
-    best_box = scores.argmax(0).unsqueeze(-1)
-    best_boxes = bboxes1 * (1 - best_box) + best_box * bboxes2
-    cell_indices = torch.arange(S).repeat(batch_size, S, 1).unsqueeze(-1)
-    x = 1 / S * (best_boxes[..., 0:1] + cell_indices)
-    y = 1 / S * (best_boxes[..., 1:2] + cell_indices.permute(0, 2, 1, 3)) # TODO: is it correct?
-    w_h = 1 / S * best_boxes[..., 2:4]
-    converted_bboxes = torch.cat((x, y, w_h), dim = -1)
-    predicted_class = predictions[..., :C].argmax(-1).unsqueeze(-1)
-    best_confidence = torch.max(predictions[..., C], predictions[..., C + 5 * 1]).unsqueeze(
-        -1
-    )
-    converted_preds = torch.cat(
-        (predicted_class, best_confidence, converted_bboxes), dim = -1
-    )
-    return converted_preds
-
-
-
-def cellboxes_to_boxes(out, S=7): # TODO: I don't need this function
+def cellboxes_to_boxes(out, S=7):
     converted_pred = convert_cellboxes(out).reshape(out.shape[0], S * S, -1)
-    # print('SASHA')
-    # print(converted_pred[0,0,:])
-    # print()
     converted_pred[..., 0] = converted_pred[..., 0].long()
     all_bboxes = []
 
@@ -332,8 +307,6 @@ def get_bboxes(
         with torch.no_grad():
             predictions = model(x)
 
-        print('labels', labels.size())
-        print('predictions', predictions.size())
         batch_size = x.shape[0]
         true_bboxes = cellboxes_to_boxes(labels)
         bboxes = cellboxes_to_boxes(predictions)
@@ -359,26 +332,21 @@ def get_bboxes(
     model.train()
     return all_pred_boxes, all_true_boxes
 
-def get_metrics_NEW(
-    loader, model, iou_threshold, threshold, device, loss_func, box_format = 'midpoint',
-        S = 7, B = 2, C = 20
+def get_metrics(
+    loader, model, iou_threshold, threshold, device, dtype, box_format = 'midpoint'
 ):
-    pred_bb = []
-    target_bb = []
-    losses = []
-    # make sure model is in eval before get bboxes
-    model.eval()
+    all_pred_boxes = []
+    all_true_boxes = []
+
+    model.eval() # set model to evaluation mode
     train_idx = 0
 
     for imgs, labels in loader:
-        imgs = imgs.to(device)
-        labels = labels.to(device)
+        imgs = imgs.to(device = device, dtype = dtype)
+        labels = labels.to(device = device) # , dtype = dtype
 
         with torch.no_grad():
             predictions = model(imgs)
-
-        loss = loss_func(predictions, labels)
-        losses.append(float(loss))
 
         batch_size = imgs.shape[0]
         true_bboxes = cellboxes_to_boxes(labels)
@@ -393,53 +361,49 @@ def get_metrics_NEW(
             )
 
             for nms_box in nms_boxes:
-                pred_bb.append([train_idx] + nms_box)
+                all_pred_boxes.append([train_idx] + nms_box)
 
             for box in true_bboxes[idx]:
                 # many will get converted to 0 pred
                 if box[1] > threshold:
-                    target_bb.append([train_idx] + box)
+                    all_true_boxes.append([train_idx] + box)
 
             train_idx += 1
 
-    # loss
-    loss = sum(losses) / len(losses)
-    # mAP
-    maps = []
-    for iou in np.arange(0.5, 1, 0.05):
-        maps.append(
-            float(mean_average_precision(pred_bb, target_bb, iou_threshold=iou, box_format='midpoint'))
-        )
-
     model.train()
-    return loss, maps
+    return all_pred_boxes, all_true_boxes
 
 
 
-def get_metrics(
-    loader, model, iou_threshold, threshold, device, dtype, loss_func, S = 7, B = 2, C = 20
-):
-    pred_bb, target_bb = get_bboxes(
-        loader = loader, model = model, iou_threshold = iou_threshold, threshold = threshold,
-        device= device
+def get_dataloader(params):
+    # create data loader
+    BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATA_DIR, CSV_TRAIN, CSV_VAL = params
+    img_dir = '{}/images'.format(DATA_DIR)
+    label_dir = '{}/labels'.format(DATA_DIR)
+    csv_dir_t = '{}/{}'.format(DATA_DIR, CSV_TRAIN)
+    csv_dir_v = '{}/{}'.format(DATA_DIR, CSV_VAL)
+    my_transform = {
+        'train': transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor(),]),
+        'val': transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor(), ])
+    }
+
+    data_train = VOCDataset(
+        dataset_csv = csv_dir_t, img_dir = img_dir, label_dir = label_dir , transform = my_transform['train']
     )
-
-    # loss function
-    print('*', len(pred_bb), len(target_bb))
-    print('**', pred_bb[0].shape)
-    t_pred_bb = torch.cat(pred_bb, dim = 0)
-    print('***', t_pred_bb.shape)
-    t_target_bb = torch.cat(target_bb, dim = 0)
-    loss = loss_func(t_pred_bb, t_target_bb)
-
-    # mAP
-    maps = []
-    for iou in np.arange(0.5, 1, 0.05):
-        maps.append(
-            float(mean_average_precision(pred_bb, target_bb, iou_threshold = iou, box_format = 'midpoint'))
+    data_val = VOCDataset(
+        dataset_csv = csv_dir_v, img_dir = img_dir, label_dir = label_dir , transform = my_transform['val']
+    )
+    data_loader = {
+        'train': DataLoader(
+            data_train, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS,
+            drop_last=True, pin_memory=PIN_MEMORY
+        ),
+        'val': DataLoader(
+            data_val, batch_size=BATCH_SIZE, shuffle=True, num_workers=NUM_WORKERS,
+            drop_last=True, pin_memory=PIN_MEMORY
         )
-    print('get metrics: ', type(loss), type(maps[0]))
-    return loss, maps
+    }
+    return data_loader
 
 def print_report(part, epoch = None, t = None, metrics = None):
     if part == 'start':
@@ -453,100 +417,25 @@ def print_report(part, epoch = None, t = None, metrics = None):
         print(colored('-' * 132, 'cyan'))
         print()
     else: # report statistics
-        # loss
-        train_loss, val_loss, train_maps, val_maps = metrics
+        train_loss, val_loss, train_map, val_map = metrics
         t_loss, v_loss = round(train_loss, 3), round(val_loss, 3)
-        prefix = 6 - str(t_loss).find('.')
-        postfix = 4 - (len(str(t_loss)) - str(t_loss).find('.'))
-        t_loss = '{}{}{}'.format(' ' * prefix, t_loss, '0' * postfix)
-        prefix = 6 - str(v_loss).find('.')
-        postfix = 4 - (len(str(v_loss)) - str(v_loss).find('.'))
-        v_loss = '{}{}{}'.format(' ' * prefix, v_loss, '0' * postfix)
+        t_loss = '{}{}'.format(t_loss, ' ' * (5 - len(str(t_loss))))
+        v_loss = '{}{}'.format(v_loss, ' ' * (5 - len(str(v_loss))))
         t_print = 'TRAIN   : loss = {}'.format(t_loss)
         v_print = 'VALIDATE: loss = {}'.format(v_loss)
 
-        # mAP@0.5
-        t_map, v_map = round(100 * train_maps[0], 2), round(100 * val_maps[0], 2)
+        t_map, v_map = round(100 * float(train_map), 2), round(100 * float(val_map), 2)
         if '.' not in str(t_map):
-            t_map = '{}{}.00'.format((3 - len(str(t_map))) * ' ' , t_map)
+            t_map = '{}.00'.format(t_map)
         else:
-            prefix = 3 - str(t_map).find('.')
-            postfix = 2 - (len(str(t_map)) - str(t_map).find('.'))
-            t_map = '{}{}{}'.format(' ' * prefix, t_map, '0' * postfix)
-
+            t_map = '{}{}'.format(t_map, '0' * (6 - len(str(t_map))))
         if '.' not in str(v_map):
-            v_map = '{}{}.00'.format((3 - len(str(v_map))) * ' ', v_map)
+            v_map = '{}.00'.format(v_map)
         else:
-            prefix = 3 - str(v_map).find('.')
-            postfix = 2 - (len(str(v_map)) - str(v_map).find('.'))
-            v_map = '{}{}{}'.format(' ' * prefix, v_map, '0' * postfix)
-
+            v_map = '{}{}'.format(v_map, '0' * (6 - len(str(v_map))))
         t_print += ' | mAP@0.5  = {}%'.format(t_map) # mAP@0.5:0.05:0.95
         v_print += ' | mAP@0.5  = {}%'.format(v_map) # mAP@0.5:0.05:0.95
-
-        # mAP@0.5:0.05:0.95
-        t_map, v_map = round(100 * np.mean(train_maps), 2), round(100 * np.mean(val_maps), 2)
-        if '.' not in str(t_map):
-            t_map = '{}{}.00'.format((3 - len(str(t_map))) * ' ', t_map)
-        else:
-            prefix = 3 - str(t_map).find('.')
-            postfix = 2 - (len(str(t_map)) - str(t_map).find('.'))
-            t_map = '{}{}{}'.format(' ' * prefix, t_map, '0' * postfix)
-
-        if '.' not in str(v_map):
-            v_map = '{}{}.00'.format((3 - len(str(v_map))) * ' ', v_map)
-        else:
-            prefix = 3 - str(v_map).find('.')
-            postfix = 2 - (len(str(v_map)) - str(v_map).find('.'))
-            v_map = '{}{}{}'.format(' ' * prefix, v_map, '0' * postfix)
-
-        t_print += ' | mAP@0.5:0.05:0.95  = {}%'.format(t_map)  # mAP@0.5:0.05:0.95
-        v_print += ' | mAP@0.5:0.05:0.95  = {}%'.format(v_map)  # mAP@0.5:0.05:0.95
-
         print(t_print)
         print(v_print)
-
-def get_n_classes(min_class, root = 'home/alex/datasets/imagenet/'):
-    classes = os.listdir(root)
-    out = 0
-    for my_class in classes:
-        if '.' in my_class: continue
-        imgs = os.listdir('{}/{}'.format(root, my_class))
-        out +=  (len(imgs) >= min_class)
-    return out
-
-def load_checkpoint(file_name, device, S, B, C, cfg = None):
-    print('Loading checkpoint...')
-    if cfg is None:
-        checkpoint = torch.load(file_name)
-        cfg = checkpoint['cfg']
-    BACKBONE = cfg['MODEL']
-    N_LAYERS = cfg.get('N_LAYERS', 0)
-    MIN_IMAGES = cfg['MIN_IMAGES']
-    DATASET_DIR = cfg['DATASET_DIR']
-    print(MIN_IMAGES, DATASET_DIR)
-
-    print('backbone:', BACKBONE)
-    if BACKBONE == 'Darknet':
-        n_classes = get_n_classes(MIN_IMAGES, root=DATASET_DIR)
-        backbone = Darknet(n_layers = N_LAYERS, num_classes = n_classes)
-        backbone.load_state_dict(checkpoint['model'])
-        model = YoloV1_pretrained(
-            backbone=backbone, n_layers=N_LAYERS, grid_size=S, num_boxes=B, num_classes=C
-        ).to(device)
-
-    # for param in backbone.parameters():
-    #     param.requires_grad = False
-
-    elif BACKBONE == 'VGG16':
-        model = OD_backbone(
-            bb_name = BACKBONE, grid_size = S, num_boxes = B, num_classes = C
-        ).to(device)
-
-    if BACKBONE == 'Darknet':
-        epoch = checkpoint['epoch']
-    else:
-        epoch = 0
-    return model, cfg, epoch
 
 

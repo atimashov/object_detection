@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import intersection_over_union
+from utils_1224 import intersection_over_union
 
 class YoloLoss(nn.Module):
     def __init__(self, S = 7, B = 2, C = 20):
@@ -84,7 +84,7 @@ class YoloLoss(nn.Module):
             + class_loss
         )
 
-        return loss
+        return loss / predictions.shape[0] # added mean instead of absolute
 
 def test(S = 7, B = 2, C = 20):
     target = torch.ones((13, S,  S,  (C + 5 * B)))

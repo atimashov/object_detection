@@ -5,14 +5,14 @@ DECAY_RATE: 0.1
 WEIGHT_DECAY: 0
 BALANCED_DATASET: false
 GPU: true
-MODEL: 'Darknet'
-BATCH_SIZE: 4 # 64 in original paper but I don't have that much vram, grad accum?
+MODEL: 'VGG16'# 'Darknet'
+BATCH_SIZE: 64
 DECAY_EPOCHS: 30
 EPOCHS: 300
 NUM_WORKERS: 12
 PIN_MEMORY: true
-LOAD_MODEL: false
-LOAD_MODEL_FILE: 'weights/Darknet20/epoch033_1_397.pth.tar'
+LOAD_MODEL: true
+LOAD_MODEL_FILE: '/home/alex/Projects/object_detection/BackBones/weights/Darknet20/epoch065_1_282.pth.tar'
 SAVE_MODEL: false
 SAVE_MODEL_N: 5
 SAVE_MODEL_DIR: 'weights'

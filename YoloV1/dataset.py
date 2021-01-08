@@ -3,7 +3,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 import os
 import pandas as pd
-from PIL import Image
+from PIL import Image, JpegImagePlugin
 from tqdm import tqdm
 
 class VOCDataset(torch.utils.data.Dataset):
@@ -31,13 +31,12 @@ class VOCDataset(torch.utils.data.Dataset):
                 boxes.append([class_label, x, y, width, height])
 
         img_path = os.path.join(self.img_dir, self.annotations.iloc[index, 0])
-        image = Image.open(img_path)
+        image = Image.open(img_path) # in PIL
         boxes = torch.tensor(boxes)
 
         if self.transform: # TODO: if transforms is None, it will not work
-            image = self.transform(image)
-            # image, boxes = self.transform(image, boxes) # TODO: make normal augmentation for object detection
-
+            # image = self.transform(image)
+            image, boxes = self.transform(image, boxes) # TODO: make normal augmentation for object detection
         # convert to cells
         label_matrix = torch.zeros((self.S, self.S, self.B * 5 + self.C))
         for box in boxes:
