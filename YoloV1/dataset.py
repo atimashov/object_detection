@@ -1,6 +1,5 @@
 import torch
 from torch.utils.data import DataLoader
-from torchvision import transforms
 import os
 import pandas as pd
 from PIL import Image, JpegImagePlugin
@@ -8,9 +7,10 @@ from tqdm import tqdm
 
 class VOCDataset(torch.utils.data.Dataset):
     def __init__(
-            self, dataset_csv, img_dir, label_dir, S = 7, B = 2, C = 20, transform = None
+            self, dataset_csv, img_dir, label_dir, S = 7, B = 2, C = 20, transform = None, test = False
     ):
-        self.annotations = pd.read_csv(dataset_csv)
+        self.test = test
+        self.annotations = dataset_csv
         self.img_dir = img_dir
         self.label_dir = label_dir
         self.transform = transform
@@ -34,9 +34,10 @@ class VOCDataset(torch.utils.data.Dataset):
         image = Image.open(img_path) # in PIL
         boxes = torch.tensor(boxes)
 
-        if self.transform: # TODO: if transforms is None, it will not work
-            # image = self.transform(image)
+        if self.transform:
             image, boxes = self.transform(image, boxes) # TODO: make normal augmentation for object detection
+        if self.test:
+            return image, boxes
         # convert to cells
         label_matrix = torch.zeros((self.S, self.S, self.B * 5 + self.C))
         for box in boxes:
@@ -61,7 +62,7 @@ def test():
     img_dir = '{}/images'.format(data_dir)
     label_dir = '{}/labels'.format(data_dir)
     csv_dir = '{}/100examples.csv'.format(data_dir)
-    transform = transforms.Compose([transforms.Resize((448, 448)), transforms.ToTensor(), ])
+    transform = None
     data = VOCDataset(
         dataset_csv = csv_dir, img_dir = img_dir, label_dir = label_dir , transform = transform
     )

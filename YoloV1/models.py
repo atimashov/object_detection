@@ -229,7 +229,7 @@ class OD_backbone(nn.Module):
         x = self.classifier(x)
         return x
 
-class YoloV1_pretrained(nn.Module):
+class YoloV1_pretrained_old(nn.Module):
     def __init__(self, backbone, n_layers = 20, **kwargs):
         super(YoloV1_pretrained, self).__init__()
         self.n_layers = 24 - n_layers # should be between 20 and 24
@@ -265,6 +265,49 @@ class YoloV1_pretrained(nn.Module):
         return out
 
     def forward(self, x):
+        x = self.features(x)
+        x = torch.flatten(x, start_dim = 1)
+        x = self.classifier(x)
+        return x
+
+class YoloV1_pretrained(nn.Module):
+    def __init__(self, backbone, n_layers = 20, **kwargs):
+        super(YoloV1_pretrained, self).__init__()
+        self.n_layers = 24 - n_layers # should be between 20 and 24
+
+        layers = []
+        self.architecture = [
+            ('conv', (3, 1024, 1, 1)),
+            ('conv', (3, 1024, 2, 1)),
+            ('conv', (3, 1024, 1, 1)),
+            ('conv', (3, 1024, 1, 1))
+        ]
+        self.architecture = self.architecture[-self.n_layers:]
+        in_channels = 1024 # can I do it automatically?
+        for layer_type, layer_cfg in self.architecture:
+            if layer_type == 'conv':
+                k_size, out_channels, stride, pad = layer_cfg
+                layers.append(
+                    CNNBlock(in_channels, out_channels, kernel_size=k_size, stride=stride, padding=pad)
+                )
+                in_channels = out_channels
+        self.backbone = backbone.features
+        self.features = nn.Sequential(*layers)
+        self.classifier = self._create_fcs(**kwargs)
+
+    def _create_fcs(self, grid_size, num_boxes, num_classes):
+        S, B, C = grid_size, num_boxes, num_classes
+        out = nn.Sequential(
+            # nn.Flatten(),
+            nn.Linear(1024 * S * S, 4960), # TODO: add in_channel; !!! can change for fast training 4960 to 496
+            nn.Dropout(0.5),
+            nn.LeakyReLU(0.1),
+            nn.Linear(4960, S * S * (C + B * 5))
+        )
+        return out
+
+    def forward(self, x):
+        x = self.backbone(x)
         x = self.features(x)
         x = torch.flatten(x, start_dim = 1)
         x = self.classifier(x)

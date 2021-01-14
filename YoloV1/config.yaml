@@ -1,23 +1,32 @@
 seed: 123
 # Hyperparameters etc.
-LEARNING_RATE: 0.00003
-DECAY_RATE: 0.1
-WEIGHT_DECAY: 0
 BALANCED_DATASET: false
 GPU: true
-MODEL: 'VGG16'# 'Darknet'
+MODEL: 'Darknet' # 'VGG16'#
 BATCH_SIZE: 64
-DECAY_EPOCHS: 30
 EPOCHS: 300
 NUM_WORKERS: 12
 PIN_MEMORY: true
 LOAD_MODEL: true
-LOAD_MODEL_FILE: '/home/alex/Projects/object_detection/BackBones/weights/Darknet20/epoch065_1_282.pth.tar'
+#LOAD_MODEL_FILE: '/home/alex/Projects/object_detection/BackBones/weights/Darknet20/epoch065_1_282.pth.tar'
+LOAD_MODEL_FILE: '/home/alex/Projects/object_detection/BackBones/weights/Darknet22/epoch048_1_321.pth.tar'
 SAVE_MODEL: false
 SAVE_MODEL_N: 5
 SAVE_MODEL_DIR: 'weights'
-DATASET_DIR: '/home/alex/datasets/PascalVOC'
+DATASET_DIR: '/home/alex/datasets/PascalVOC_0113'
 MIN_IMAGES: 750
 LOSS:  'My Entropy' # 'SVM' #
-CSV_TRAIN: 'train.csv'
-CSV_VAL: 'test.csv'
+CSV_TRAIN: ['voc_2007.csv', 'voc_2012.csv']
+CSV_VAL: ['voc_2007test.csv']
+OPTIMIZER:
+  name: 'Adam' #'SGD+Nesterov'
+  scheduler:
+    flag: false #true
+    epochs: [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28,30, 32, 34,36, 38, 40]
+    lr: [0.0001, 0.0002, 0.0004, 0.0006, 0.001, 0.0015, 0.002, 0.0025, 0.003, 0.0035, 0.0045, 0.005, 0.0055, 0.006, 0.0065, 0.007, 0.0075, 0.008, 0.0085, 0.009, 0.01]
+  lr: 0.0003
+  decay:
+    epochs: 30
+    rate: 0.5
+  momentum: 0.9
+  weight_decay: 0.0005

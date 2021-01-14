@@ -16,6 +16,8 @@ from utils import (
     # get_bboxes,
     plot_image,
     get_dataloader,
+    get_optimizer,
+    create_stat,
     get_metrics,
     get_metrics_NEW,
     print_report,
@@ -29,34 +31,12 @@ from argparse import ArgumentParser
 import os
 from time import time
 import numpy as np
+from datetime import datetime
+import pandas as pd
+import json
+import csv
 
-# class Compose(object):
-#     def __init__(self, transforms):
-#         self.transforms = transforms
-#
-#     def __call__(self, img, bboxes):
-#         for t in self.transforms:
-#             img, bboxes = t(img), bboxes
-#         return img, bboxes
-#
-#
-# transform_t = Compose([
-#     transforms.ColorJitter(brightness = 0.5, hue=.05, saturation=.05),
-#     # transforms.RandomGrayscale(p = 0.15),
-#     transforms.Resize((448, 448)),
-#     transforms.ToTensor(),
-# ])
-# transform_v = Compose([
-#     transforms.Resize((448, 448)),
-#     transforms.ToTensor(),
-# ])
-#
-# transform = {
-#     'train': transform_t,
-#     'val': transform_v
-# }
-
-def train_epoch(train_loader, model, optimizer, device, loss_func=torch.nn.CrossEntropyLoss()):
+def train_epoch(train_loader, model, optimizer, device, loss_func=torch.nn.CrossEntropyLoss(), cfg = None):
     loop = tqdm(train_loader, leave = True)
 
     for batch_idx, (imgs, labels) in enumerate(loop):
@@ -71,12 +51,19 @@ def train_epoch(train_loader, model, optimizer, device, loss_func=torch.nn.Cross
         loss.backward()
         optimizer.step()
         # update progress bar
-        loop.set_postfix(loss=loss.item())
+        if cfg:
+            name, lr = cfg
+            loop.set_postfix(opt = name, lr = lr, loss=loss.item())
+        else:
+            loop.set_postfix(loss=loss.item())
 
-def train_loop(cfg_path, gpu_n='0'):
+def train_loop(cfg_path, gpu_n = '0', stat_path = 'stat'):
     # get configs
     with open(cfg_path, 'r') as stream:
         config = yaml.safe_load(stream)
+    print()
+    print(config)
+    print()
     device = torch.device('cuda:{}'.format(gpu_n) if config['GPU'] and torch.cuda.is_available else 'cpu')
     dtype = torch.float32  # TODO: find out how it affects speed and accuracy
     MODEL = config['MODEL']
@@ -86,16 +73,18 @@ def train_loop(cfg_path, gpu_n='0'):
     SAVE_MODEL_N = config['SAVE_MODEL_N']
     SAVE_MODEL_DIR = config['SAVE_MODEL_DIR']
     DATASET_DIR = config['DATASET_DIR']
-    L_RATE = config['LEARNING_RATE']
-    DECAY_RATE = config['DECAY_RATE']
-    DECAY_EPOCHS = config['DECAY_EPOCHS']
-    WEIGHT_DECAY = config['WEIGHT_DECAY']
+
     EPOCHS = config['EPOCHS']
     BATCH_SIZE = config['BATCH_SIZE']
     NUM_WORKERS = config['NUM_WORKERS']
     PIN_MEMORY = config['PIN_MEMORY']
     CSV_TRAIN = config['CSV_TRAIN']
     CSV_VAL = config['CSV_VAL']
+
+    OPTIMIZER = config['OPTIMIZER']
+
+    # create stat file
+    nid = create_stat(stat_path, config)
 
     # set up model
     S, B, C = 7, 2, 20 # TODO: add it to config
@@ -112,12 +101,9 @@ def train_loop(cfg_path, gpu_n='0'):
             model = YoloV1(grid_size=S, num_boxes=B, num_classes=C).to(device)
         elif MODEL == 'VGG':
             pass  # add here VGG backbone
-        model = init_weights(model)
+    model = init_weights(model)
     start_epoch = 0
 
-    optimizer = optim.Adam(
-        model.parameters(), lr=L_RATE, weight_decay=WEIGHT_DECAY
-    )
     loss_fn = YoloLoss()
     loader_params = BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATASET_DIR, CSV_TRAIN, CSV_VAL
     loader = get_dataloader(loader_params, my_transforms)
@@ -128,16 +114,14 @@ def train_loop(cfg_path, gpu_n='0'):
             os.makedirs('{}/{}'.format(SAVE_MODEL_DIR, MODEL))
     losses, accuracies = {'train': [], 'validate': []}, {'train': [], 'validate': []}
 
+    optimizer = None
+    opt_lr = None
     for epoch in range(start_epoch, EPOCHS + start_epoch):
         t = time()
-        if (epoch + 1) % DECAY_EPOCHS == 0:
-            L_RATE *= (1 - DECAY_RATE)
-            optimizer = optim.Adam(model.parameters(), lr=L_RATE, weight_decay=WEIGHT_DECAY)
-
-        # print epoch number
+        optimizer, opt_name, opt_lr = get_optimizer(optimizer, model, OPTIMIZER, epoch, opt_lr)
         print_report(part='start', epoch=epoch)
         # train loop
-        train_epoch(loader['train'], model, optimizer, device, loss_fn)
+        train_epoch(loader['train'], model, optimizer, device, loss_fn, (opt_name, opt_lr))
 
         # print metrics
         train_loss, train_maps = get_metrics_NEW(
@@ -157,6 +141,11 @@ def train_loop(cfg_path, gpu_n='0'):
         losses['validate'].append(val_loss)
         accuracies['train'].append(np.mean(train_maps))
         accuracies['validate'].append(np.mean(val_maps))
+        # write stats to CSV
+        r = [nid, datetime.now(), epoch, train_loss, val_loss, train_maps, val_maps]
+        with open('{}/stat.csv'.format(stat_path), 'a') as f:
+            writer = csv.writer(f)
+            writer.writerow(r)
 
         # save models
         # if SAVE_MODEL:
@@ -174,9 +163,10 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--gpu-number', type=str, default='0', help='GPU number: 0 or 1')
     parser.add_argument('--config', type=str, default='config.yaml', help='config file')
-
     inputs = parser.parse_args()
     print(inputs)
+
+    # run train loop
     gpu_n = inputs.gpu_number
     cfg_path = inputs.config
     train_loop(cfg_path, gpu_n = gpu_n)

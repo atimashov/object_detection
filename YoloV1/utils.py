@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from collections import Counter
@@ -7,8 +8,10 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 from torch.nn.init import kaiming_normal_
 from torch import nn
+import torch.optim as optim
 from termcolor import colored
 import os
+import json
 from dataset import VOCDataset
 from models import Darknet, YoloV1_pretrained, OD_backbone
 
@@ -24,17 +27,31 @@ def init_weights(model):
 def get_dataloader(params, transform):
     # create data loader
     BATCH_SIZE, NUM_WORKERS, PIN_MEMORY, DATA_DIR, CSV_TRAIN, CSV_VAL = params
+    print('***:',type(CSV_TRAIN),type(CSV_VAL))
     img_dir = '{}/images'.format(DATA_DIR)
     label_dir = '{}/labels'.format(DATA_DIR)
-    csv_dir_t = '{}/{}'.format(DATA_DIR, CSV_TRAIN)
-    csv_dir_v = '{}/{}'.format(DATA_DIR, CSV_VAL)
+    # create annotations
+    if type(CSV_TRAIN) == str:
+        csv_t = pd.read_csv('{}/{}'.format(DATA_DIR, CSV_TRAIN))
+    else:
+        csv_t = pd.DataFrame(columns=['image', 'annotation'])
+        for csv_dir in CSV_TRAIN:
+            csv_t = csv_t.append(pd.read_csv('{}/{}'.format(DATA_DIR, csv_dir)), ignore_index=True)
+
+    if type(CSV_VAL) == str:
+        csv_v = pd.read_csv('{}/{}'.format(DATA_DIR, CSV_VAL))
+    else:
+        csv_v = pd.DataFrame(columns=['image', 'annotation'])
+        for csv_dir in CSV_VAL:
+            csv_v = csv_v.append(pd.read_csv('{}/{}'.format(DATA_DIR, csv_dir)), ignore_index=True)
+
     my_transform = transform
 
     data_train = VOCDataset(
-        dataset_csv = csv_dir_t, img_dir = img_dir, label_dir = label_dir , transform = my_transform['train']
+        dataset_csv = csv_t, img_dir = img_dir, label_dir = label_dir , transform = my_transform['train']
     )
     data_val = VOCDataset(
-        dataset_csv = csv_dir_v, img_dir = img_dir, label_dir = label_dir , transform = my_transform['val']
+        dataset_csv = csv_v, img_dir = img_dir, label_dir = label_dir , transform = my_transform['val']
     )
     data_loader = {
         'train': DataLoader(
@@ -47,6 +64,53 @@ def get_dataloader(params, transform):
         )
     }
     return data_loader
+
+def get_optimizer(optimizer, model, cfg, epoch, lr):
+    flag = cfg['scheduler']['flag']
+    epochs = cfg['scheduler']['epochs'] if flag else [i * cfg['decay']['epochs'] for i in range(100)]
+    wd = cfg['weight_decay']
+
+    if epoch not in epochs:
+        return optimizer, cfg['name'], lr
+    # it is time to change optimizer
+    if flag:
+        lrs = {epochs[i]:cfg['scheduler']['lr'][i] for i in range(len(epochs))}
+        lr = lrs[epoch]
+    else:
+        p = (epoch + 1) //  cfg['decay']['epochs']
+        lr = cfg['lr'] * (1 - cfg['decay']['rate']) ** p
+    if cfg['name'] == 'Adam':
+        optimizer = optim.Adam(model.parameters(), lr = lr, weight_decay = wd)
+    elif cfg['name'] == 'SGD+Nesterov':
+        momentum = cfg['momentum']
+        optimizer = optim.SGD(
+            model.parameters(), lr=lr, momentum=momentum, nesterov=True, weight_decay = wd
+        )
+    else: # TODO: change to None
+        optimizer = optim.Adam(model.parameters(), lr = lr, weight_decay = wd)
+    return optimizer, cfg['name'], lr
+
+def create_stat(stat_path, cfg):
+    files = os.listdir(stat_path)
+    if 'stat.csv' not in files:
+        cols = [
+                'number_id', 'date_time', 'epoch', 'loss_train', 'loss_validate',
+                'maps_train', 'maps_validate'
+        ]
+        data = pd.DataFrame(columns = cols)
+        data.to_csv('{}/stat.csv'.format(stat_path), index = False)
+    if 'config.json' not in files:
+        nid = 1
+        data = {str(nid):cfg}
+    else:
+        with open('{}/config.json'.format(stat_path)) as json_file:
+            data = json.load(json_file)
+        nid = max(map(int, data.keys())) + 1
+        data[str(nid)] = cfg
+
+    with open('{}/config.json'.format(stat_path), 'w') as outfile:
+        json.dump(data, outfile)
+    return nid
 
 
 def intersection_over_union(boxes_preds, boxes_labels, box_format="midpoint"):
@@ -532,7 +596,7 @@ def load_checkpoint(file_name, device, S, B, C, cfg = None):
         backbone = Darknet(n_layers = N_LAYERS, num_classes = n_classes)
         backbone.load_state_dict(checkpoint['model'])
         model = YoloV1_pretrained(
-            backbone=backbone, n_layers=N_LAYERS, grid_size=S, num_boxes=B, num_classes=C
+            backbone = backbone, n_layers=N_LAYERS, grid_size=S, num_boxes=B, num_classes=C
         ).to(device)
 
     # for param in backbone.parameters():
